@@ -95,13 +95,12 @@ async def webhook(request: Request):
         # Try to enqueue the message for asynchronous processing
 
         if celery_service.is_redis_available():
+            quick_twiml = MessagingResponse()
             task_id = celery_service.enqueue_webhook_message(data)
             logger.info(f"Message enqueued with task ID: {task_id}")
             
-            twiml = MessagingResponse()
             # Send acknowledgment response
-            twiml.message("processing ⚙️...")
-            return Response(content=str(twiml), media_type="application/xml")
+            return Response(content=str(quick_twiml), media_type="application/xml")
 
         # Fallback to synchronous processing if Redis is unavailable
         logger.warning("Redis unavailable, falling back to synchronous processing")

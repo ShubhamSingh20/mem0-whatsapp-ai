@@ -21,7 +21,7 @@ class AssistantLayer:
         self.db = db_service
         self.gemini_service = GeminiService(memory_service=self.memory_service)
     
-    def process_whatsapp_message(self, data: WhatsappWebhook) -> MessageWithMedia:
+    def process_whatsapp_message(self, data: WhatsappWebhook) -> str:
         try:
             message_sid = data.get('MessageSid', '')
             
