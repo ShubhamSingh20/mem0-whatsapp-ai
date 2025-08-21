@@ -17,7 +17,7 @@ class Mem0Service:
         message: MessageWithMedia,
         user_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    ) -> Optional[List[str]]:
         try:
             # Use user_id from the message if not provided
             if user_id is None:
@@ -36,16 +36,15 @@ class Mem0Service:
                 messages=memory_content, 
                 user_id=user_id, 
                 metadata=memory_metadata,
-                version="v2",
-                output_format="v1.1",
             )
             
-            # Extract mem0 ID from result
-            mem0_id = None
-            if isinstance(result, dict) and 'results' in result and len(result['results']) > 0:
-                mem0_id = result['results'][0]['id']
 
-            return mem0_id
+            print(result)
+            # Extract mem0 ID from result
+            if isinstance(result, dict) and 'results' in result and len(result['results']) > 0:
+                return [{"id": i['id'], "memory": i['memory']} for i in result['results']]
+
+            return []
         except Exception as e:
             print(traceback.format_exc())
             return None
@@ -66,7 +65,7 @@ class Mem0Service:
                     media_info += f" - {media_file.description}"
                 content_parts.append(media_info)
         
-        return [{"role": "user", "content": " | ".join(content_parts)}, {"role": "assistant", "content": "ok"}]
+        return [{"role": "user", "content": " | ".join(content_parts)}]
     
     def _build_memory_metadata(self, message: MessageWithMedia, additional_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         # Create timestamp in UTC
@@ -116,7 +115,7 @@ class Mem0Service:
     def search_memories(self, user_id: str, query: str, filters: Dict | None = None) -> List[Dict[str, Any]]:
         return self.memory.search(user_id=user_id, query=query, filters=filters)
     
-    def add_memory_direct(self, user_id: str, memory_text: str, memory_type: str = "user_info", metadata: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    def add_memory_direct(self, user_id: str, memory_text: str, memory_type: str = "user_info", metadata: Optional[Dict[str, Any]] = None) -> Optional[List[str]]:
         try:
             # Build memory content
             memory_content = [
@@ -144,12 +143,11 @@ class Mem0Service:
             )
             
             # Extract mem0 ID from result
-            mem0_id = None
             if isinstance(result, dict) and 'results' in result and len(result['results']) > 0:
-                mem0_id = result['results'][0]['id']
+                return [{"id": i['id'], "memory": i['memory']} for i in result['results']]
             
-            return mem0_id
+            return []
         except Exception as e:
             print(f"Error adding memory directly: {e}")
             print(traceback.format_exc())
-            return None
+            return []

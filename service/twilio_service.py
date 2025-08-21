@@ -8,6 +8,14 @@ class TwilioMediaHelper:
         self.auth_token = TWILIO_AUTH_TOKEN
         self.client = Client(self.account_sid, self.auth_token)
 
+    def send_message(self, to: str, body: str):
+        message = self.client.messages.create(
+            to=f"{to}",
+            from_="whatsapp:+14155238886",
+            body=body
+        )
+        return message
+
     def list_media(self, message_sid: str):
         media_list = self.client.messages(message_sid).media.list()
         results = []

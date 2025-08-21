@@ -192,7 +192,9 @@ For the given video, transcribe the video/audio and transcribe to text in simple
         self, 
         query: str, 
         user_id: str,
+        conversation_history: str = "",
         temperature: float = 0,
+        attached_media_files: List[str] = [],
         max_output_tokens: int = 4096,
         **kwargs
     ) -> Dict[str, Any]:
@@ -205,12 +207,12 @@ For the given video, transcribe the video/audio and transcribe to text in simple
         # Initial system/user prompt
         system_prompt = f"""
 CURRENT_DATE: {datetime.now(timezone.utc).strftime("%Y-%m-%d")}
-You are a helpful AI assistant with access to memory functions. Your role is to:
+You are a helpful AI assistant named Whatsy! with access to memory functions. Your role is to:
 
 1. Answer user queries accurately and helpfully
-2. Use get_memory to retrieve relevant context when needed or when user ask for something specific
-
-3. Use store_memory to save important information from users chat:
+2. Use get_memory to retrieve relevant context when needed or when user ask for something specific which you are not aware of it and want to do a lookup in knowledge base.
+3. You have been provided with the conversation history of the user, to help better answer follow up questions.
+4. Use store_memory to save important information from users chat:
     This includes:
     * Preferences: likes, dislikes, favorites (e.g., “I prefer Italian food”).
     * Decisions: commitments, choices, or resolutions (e.g., “I’ll go with the cheaper plan”).
@@ -223,11 +225,20 @@ You are a helpful AI assistant with access to memory functions. Your role is to:
 
 When you retrieve memories, use them to provide more informed responses.
 Always be conversational and helpful and at the same time be concise and to the point, do not be verbose.
+
+{f"Conversation history: \n\n{conversation_history}" if conversation_history else ""}
 """
+        user_prompt = f"""
+User : {query}
+"""
+
+        if attached_media_files:
+            user_prompt += f"\nUser Attached Following Media Files: \n\n{attached_media_files}"
+
         contents = [
             types.Content(
                 role="user", 
-                parts=[types.Part.from_text(text=system_prompt + f"\n\nUser : {query}")]
+                parts=[types.Part.from_text(text=system_prompt + user_prompt)]
             )
         ]
 
