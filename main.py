@@ -43,6 +43,15 @@ def handle_list_command(webhook_data: WhatsappWebhook) -> str:
         memories_str += f"Info: {memory['mem0_infered_memory']}\n\n"
         memories_str += f"--------------------------------\n"
 
+    sourced_memories = db_service.get_sourced_memories(user_record['id'])
+
+    if sourced_memories:
+        memories_str += "\nSourced Memories (API):\n"
+        for memory in sourced_memories:
+            memories_str += f"ID: {memory['id']} Mem0 ID: {memory['mem0_id']}\n"
+            memories_str += f"Info: {memory['mem0_infered_memory']}\n\n"
+            memories_str += f"--------------------------------\n"
+
     return memories_str
 
 
@@ -84,22 +93,23 @@ async def webhook(request: Request):
         logger.info(f"Processed WhatsApp data: {webhook_data.dict()}")
 
         # Try to enqueue the message for asynchronous processing
-        twiml = MessagingResponse()
 
         if celery_service.is_redis_available():
             task_id = celery_service.enqueue_webhook_message(data)
             logger.info(f"Message enqueued with task ID: {task_id}")
             
+            twiml = MessagingResponse()
             # Send acknowledgment response
             twiml.message("processing ⚙️...")
             return Response(content=str(twiml), media_type="application/xml")
-        else:
-            # Fallback to synchronous processing if Redis is unavailable
-            logger.warning("Redis unavailable, falling back to synchronous processing")
-            response = assistant_layer.process_whatsapp_message(data)
-            print("\n\n", response, "\n\n")
-            twiml.message(response)
-            return Response(content=str(twiml), media_type="application/xml")
+
+        # Fallback to synchronous processing if Redis is unavailable
+        logger.warning("Redis unavailable, falling back to synchronous processing")
+        response = assistant_layer.process_whatsapp_message(data)
+        twiml_response = MessagingResponse()
+        twiml_response.message(response)
+        print(twiml_response)
+        return Response(content=str(twiml_response), media_type="application/xml")
     
     except Exception as e:
         traceback.print_exc()
@@ -139,23 +149,17 @@ async def create_memory(memory_request: CreateMemoryRequest):
     
         memory_id = assistant_layer.store_memory(user_id, memory_request.memory_text.strip(), memory_request.memory_type, memory_request.metadata)
 
-        if not memory_id:
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to create memory in Mem0 service"
-            )
-
         logger.info(f"Created memory {memory_id} for user {user_id}")
         
         return {
             "message": "Memory created successfully",
-            "memory_id": memory_id,
             "user_id": user_id,
         }
         
     except HTTPException:
         raise
     except Exception as e:
+        traceback.print_exc()
         logger.error(f"Error creating memory: {str(e)}")
         raise HTTPException(
             status_code=500, 

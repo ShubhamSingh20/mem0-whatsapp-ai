@@ -45,9 +45,9 @@ class AssistantLayer:
             
             if is_duplicate:
                 logger.info(f"Processing duplicate message with SID: {message_sid}. Using existing data.")
-                existing_media_files = self.db.get_media_files_by_message_id(existing_message.id)
-                media_files = [MediaFile(**media) for media in existing_media_files]
-                # also need to return the bot response from the interaction table
+                interaction = self.db.get_interaction_by_message_id(existing_message.id)
+                if interaction:
+                    return interaction['bot_response']
             else:
                 # Store new raw message (idempotent method will handle duplicates)
                 message_text = data.get('Body')
@@ -138,10 +138,15 @@ class AssistantLayer:
         return response_obj['response']
 
     def store_memory(self, user_id: int, memory_text: str, memory_type: str = "user_info", metadata: Optional[Dict[str, Any]] = None) -> int:
-        mem0_id = self.memory_service.add_memory_direct(user_id, memory_text, memory_type, metadata)
-        if mem0_id:
-            self.db.store_memory_direct(user_id, mem0_id)
-            return mem0_id
+        stored_memories = self.memory_service.add_memory(user_id, memory_text, memory_type, metadata)
+        if stored_memories:
+            for stored_memory in stored_memories:
+                if stored_memory['event'] == 'ADD':
+                    self.db.store_memory(user_id, None, stored_memory['id'], stored_memory['memory'])
+                elif stored_memory['event'] == 'UPDATE':
+                    self.db.update_memory(None, stored_memory['id'], stored_memory['memory'])
+                elif stored_memory['event'] == 'DELETE':
+                    self.db.delete_memory(stored_memory['id'])
         return None
 
     def process_media_files(self, message_id: int, data: Dict[str, Any]) -> List[MediaFile]:
@@ -316,6 +321,7 @@ class AssistantLayer:
     def get_memories_by_user_id(self, user_details: Dict[str, Any]) -> List[Dict[str, Any]]:
 
         memories = self.db.get_all_memories_with_user_info(user_details['id'])
+        sourced_memories = self.db.get_sourced_memories(user_details['id'])
         
         formatted_memories = []
         for memory in memories:
@@ -339,5 +345,6 @@ class AssistantLayer:
                 "timezone": user_details['timezone']
             },
             "memories_count": len(formatted_memories),
-            "memories": formatted_memories
+            "memories": formatted_memories,
+            "sourced_memories": sourced_memories
         }

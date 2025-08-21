@@ -305,9 +305,8 @@ class DatabaseService:
     
     def update_memory(self, raw_message_id: int, mem0_id: str, mem0_infered_memory: str) -> int:
         try:
-            update_sql = "UPDATE memories SET mem0_infered_memory = %s WHERE raw_message_id = %s and mem0_id = %s" 
-            self.db.update_delete(update_sql, (mem0_infered_memory, raw_message_id, mem0_id))
-            return raw_message_id
+            update_sql = "UPDATE memories SET mem0_infered_memory = %s WHERE mem0_id = %s" 
+            self.db.update_delete(update_sql, (mem0_infered_memory, mem0_id))
         except Exception as e:
             logger.error(f"Error in update_memory: {e}")
             raise
@@ -439,6 +438,17 @@ class DatabaseService:
             logger.error(f"Error in get_all_memories_with_user_info: {e}")
             raise
 
+    def get_sourced_memories(self, user_id: int) -> List[Dict[str, Any]]:
+        try:
+            select_sql = """
+                SELECT * FROM memories WHERE user_id = %s and raw_message_id isnull
+                ORDER BY created_at DESC
+            """
+            return self.db.select_many(select_sql, (user_id,))
+        except Exception as e:
+            logger.error(f"Error in get_sourced_memories: {e}")
+            raise
+
     def store_interaction(self, user_id: int, raw_message_id: int, user_message: str, bot_response: str, interaction_type: str, sources: Optional[List[str]] = None) -> int:
         try:
             insert_sql = """
@@ -451,6 +461,14 @@ class DatabaseService:
             logger.error(f"Error in store_interaction: {e}")
             raise
     
+    def get_interaction_by_message_id(self, raw_message_id: int) -> Dict[str, Any]:
+        try:
+            select_sql = "SELECT * FROM interactions WHERE raw_message_id = %s"
+            return self.db.select_one(select_sql, (raw_message_id,))
+        except Exception as e:
+            logger.error(f"Error in get_interaction_by_message_id: {e}")
+            raise   
+
     def get_interactions_by_user_id(self, user_id: int , limit:int = 10, detailed=False) -> List[Dict[str, Any]]:
         try:
             values = []

@@ -8,7 +8,7 @@ def main():
 
     # Initialize services
     mem0_service = Mem0Service()
-    mem0_service.add_memory_direct(user_id, "I love Italian food, especially red sauce asta")
+    mem0_service.add_memory(user_id, "I love Italian food, especially red sauce asta")
     
     gemini_service = GeminiService(memory_service=mem0_service)
     

@@ -210,7 +210,7 @@ CURRENT_DATE: {datetime.now(timezone.utc).strftime("%Y-%m-%d")}
 You are a helpful AI assistant named Whatsy! with access to memory functions. Your role is to:
 
 1. Answer user queries accurately and helpfully
-2. Use get_memory to retrieve relevant context when needed or when user ask for something specific which you are not aware of it and want to do a lookup in knowledge base.
+2. Use get_memory to retrieve relevant context when needed or when user ask for something specific which you are not aware of it or don't have the information in the conversation history and want to do a lookup in knowledge base.
 3. You have been provided with the conversation history of the user, to help better answer follow up questions.
 4. Use store_memory to save important information from users chat:
     This includes:
@@ -336,6 +336,7 @@ Please use these memories as context to answer the original query:
             })
 
             if fc.name == "get_memory" and self.memory_service:
+                print("searching for memory", fc.args.get("search_query", ""))
                 mem0_filters = kwargs.get('mem0_filters', {})
                 user_timezone = kwargs.get("user_timezone", "UTC")
                 start_date = fc.args.get("start_date", None)

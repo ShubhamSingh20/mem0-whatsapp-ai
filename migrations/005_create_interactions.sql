@@ -17,3 +17,7 @@ CREATE TABLE IF NOT EXISTS interactions (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+
+ALTER TABLE interactions ADD CONSTRAINT unique_interaction_per_message 
+UNIQUE (raw_message_id);
