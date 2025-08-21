@@ -296,26 +296,37 @@ class DatabaseService:
             logger.error(f"Error in get_memory_by_message_id: {e}")
             raise
 
-    def store_memory(self, user_id: int, raw_message_id: int, mem0_id: str) -> int:
+    def store_memory(self, user_id: int, raw_message_id: int, mem0_id: str, mem0_infered_memory: str) -> int:
         """Store a memory in the database. Idempotent - returns existing memory ID if duplicate."""
         try:
-            # Check if memory already exists for this message (idempotency check)
-            existing_memory = self.get_memory_by_message_id(raw_message_id)
-            if existing_memory:
-                logger.info(f"Memory for message {raw_message_id} already exists with ID: {existing_memory['id']}")
-                return existing_memory['id']
-            
             # Memory doesn't exist, proceed with insertion
             insert_sql = """
-                INSERT INTO memories (user_id, raw_message_id, mem0_id, created_at, updated_at)
-                VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                INSERT INTO memories (user_id, raw_message_id, mem0_id, mem0_infered_memory, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 RETURNING id
             """
-            memory_id = self.db.insert(insert_sql, (user_id, raw_message_id, mem0_id))
+            memory_id = self.db.insert(insert_sql, (user_id, raw_message_id, mem0_id, mem0_infered_memory))
             logger.info(f"Stored new memory with ID: {memory_id}")
             return memory_id
         except Exception as e:
             logger.error(f"Error in store_memory: {e}")
+            raise
+    
+    def update_memory(self, raw_message_id: int, mem0_id: str, mem0_infered_memory: str) -> int:
+        try:
+            update_sql = "UPDATE memories SET mem0_infered_memory = %s WHERE raw_message_id = %s and mem0_id = %s" 
+            self.db.update_delete(update_sql, (mem0_infered_memory, raw_message_id, mem0_id))
+            return raw_message_id
+        except Exception as e:
+            logger.error(f"Error in update_memory: {e}")
+            raise
+    
+    def delete_memory(self, mem0_id):
+        try:
+            delete_sql = "DELETE FROM memories WHERE mem0_id = %s"
+            self.db.update_delete(delete_sql, (mem0_id,))
+        except Exception as e:
+            logger.error(f"Error in delete_memory: {e}")
             raise
 
     def store_memory_direct(self, user_id: int, mem0_id: str) -> int:
@@ -384,11 +395,14 @@ class DatabaseService:
                     u.profile_name,
                     u.timezone,
                     rm.body as original_message_body,
-                    rm.message_type
+                    rm.message_type,
+                    ARRAY_AGG(mf.s3_key) FILTER (WHERE mf.s3_key IS NOT NULL) as media_file_s3_keys
                 FROM memories m
                 JOIN users u ON m.user_id = u.id
                 LEFT JOIN raw_messages rm ON m.raw_message_id = rm.id
+                LEFT JOIN media_files mf ON rm.id = mf.raw_message_id
                 WHERE m.user_id = %s
+                GROUP BY m.id, m.user_id, m.raw_message_id, m.mem0_id, m.created_at, m.updated_at, u.whatsapp_id, u.phone_number, u.profile_name, u.timezone, rm.body, rm.message_type
                 ORDER BY m.created_at DESC
             """
             return self.db.select_many(select_sql, (user_id,))
@@ -396,17 +410,79 @@ class DatabaseService:
             logger.error(f"Error in get_all_memories_with_user_info: {e}")
             raise
 
-    def store_interaction(self, user_id: int, raw_message_id: int, memory_id: int, user_message: str, bot_response: str, interaction_type: str) -> int:
+    def store_interaction(self, user_id: int, raw_message_id: int, user_message: str, bot_response: str, interaction_type: str) -> int:
         try:
             insert_sql = """
-                INSERT INTO interactions (user_id, raw_message_id, memory_id, user_message, bot_response, interaction_type, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                INSERT INTO interactions (user_id, raw_message_id, user_message, bot_response, interaction_type, created_at)
+                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
                 RETURNING id
             """
-            return self.db.insert(insert_sql, (user_id, raw_message_id, memory_id, user_message, bot_response, interaction_type))
+            return self.db.insert(insert_sql, (user_id, raw_message_id, user_message, bot_response, interaction_type))
         except Exception as e:
             logger.error(f"Error in store_interaction: {e}")
             raise
+    
+    def get_interactions_by_user_id(self, user_id: int , limit:int = 10, detailed=False) -> List[Dict[str, Any]]:
+        try:
+            values = []
+            if detailed:
+                # detailed query with memory_id and raw_message_id and media_files if any
+                select_sql = """
+                    select
+                        i.id,
+                        i.raw_message_id,
+                        i.user_message,
+                        i.bot_response,
+                        coalesce(rm.body, 'NO_TEXT_ONLY_MEDIA') as original_message_body,
+                        rm.message_type,
+                        ARRAY_AGG(mf.s3_key) filter (
+                        where mf.s3_key is not null) as media_file_s3_keys,
+                        array_agg(
+                            json_build_object(
+                                'mem0_id', m.mem0_id,
+                                'mem0_infered_memory', m.mem0_infered_memory
+                            ) 
+                        ) filter (
+                            where m.mem0_infered_memory is not null
+                        ) as memories
+                    from
+                        interactions i
+                    left join memories m on
+                        m.raw_message_id = i.raw_message_id
+                    left join raw_messages rm on
+                        m.raw_message_id = rm.id
+                    left join media_files mf on
+                        rm.id = mf.raw_message_id
+                    where
+                        i.user_id = %s
+                    group by
+                        i.id,
+                        i.raw_message_id,
+                        i.user_message,
+                        i.bot_response,
+                        rm.body,
+                        rm.message_type,
+                        i.created_at
+                    order by
+                        i.id desc
+                    limit %s
+                """
+                values = (user_id, limit)
+            else:
+                select_sql = "SELECT * FROM interactions WHERE user_id = %s ORDER BY id DESC LIMIT %s"
+                values = (user_id, limit)
 
+            return self.db.select_many(select_sql, values)
+        except Exception as e:
+            logger.error(f"Error in get_interactions_by_user_id: {e}")
+            raise
+
+    def get_media_file_by_hash(self, user_id: int, file_hash: str) -> Optional[Dict[str, Any]]:
+        try:
+            select_sql = "SELECT * FROM media_files WHERE user_id = %s and file_hash = %s"
+            return self.db.select_one(select_sql, (user_id, file_hash,))
+        except Exception as e:
+            logger.error(f"Error in get_media_file_by_hash: {e}")
+            raise
 # Global database instance
 db_service = DatabaseService()
