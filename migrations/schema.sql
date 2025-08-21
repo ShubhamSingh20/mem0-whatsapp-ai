@@ -10,6 +10,15 @@ CREATE TABLE IF NOT EXISTS users (
     is_active BOOLEAN DEFAULT TRUE
 );
 
+CREATE TABLE IF NOT EXISTS memories (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    mem0_infered_memory TEXT,
+    raw_message_id INTEGER REFERENCES raw_messages(id) ON DELETE CASCADE,
+    mem0_id VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
 CREATE TABLE IF NOT EXISTS raw_messages (
     id SERIAL PRIMARY KEY,
@@ -72,3 +81,4 @@ CREATE TABLE IF NOT EXISTS interactions (
 
 ALTER TABLE interactions ADD CONSTRAINT unique_interaction_per_message 
 UNIQUE (raw_message_id);
+
