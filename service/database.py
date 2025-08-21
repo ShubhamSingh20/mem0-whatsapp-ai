@@ -10,7 +10,7 @@ import phonenumbers
 
 import json
 from configs import postgres_db, postgres_userName, postgres_password, postgres_url, postgres_port
-from models.models import MediaFile, RawMessage, User
+from models.models import MediaFile, RawMessage, User, Memory
 
 logger = logging.getLogger(__name__)
 
@@ -378,6 +378,19 @@ class DatabaseService:
             logger.error(f"Error in increment_forwarded_count: {e}")
             raise
 
+    def list_memories(self, user_id: int) -> List[Memory]:
+        try:
+            select_sql = """
+                SELECT * FROM memories
+                WHERE user_id = %s
+                ORDER BY created_at DESC
+            """
+            result = self.db.select_many(select_sql, (user_id,))
+            return result
+        except Exception as e:
+            logger.error(f"Error in list_memories: {e}")
+            raise
+
     def get_all_memories_with_user_info(self, user_id: int) -> List[Dict[str, Any]]:
         try:
             select_sql = """
@@ -444,48 +457,48 @@ class DatabaseService:
             if detailed:
                 # detailed query with memory_id and raw_message_id and media_files if any
                 select_sql = """
-SELECT
-  i.id,
-  i.user_id,
-  i.raw_message_id,
-  i.user_message,
-  i.bot_response,
-  i.sources AS sources,
-  COALESCE(rm.body, 'NO_TEXT_ONLY_MEDIA') AS original_message_body,
-  rm.message_type,
-  media.media_file_s3_keys,
-  COALESCE(mem_created.memory_created, '[]'::json) AS memory_created
-FROM interactions i
-LEFT JOIN raw_messages rm
-  ON rm.id = i.raw_message_id
+                    SELECT
+                    i.id,
+                    i.user_id,
+                    i.raw_message_id,
+                    i.user_message,
+                    i.bot_response,
+                    i.sources AS sources,
+                    COALESCE(rm.body, 'NO_TEXT_ONLY_MEDIA') AS original_message_body,
+                    rm.message_type,
+                    media.media_file_s3_keys,
+                    COALESCE(mem_created.memory_created, '[]'::json) AS memory_created
+                    FROM interactions i
+                    LEFT JOIN raw_messages rm
+                    ON rm.id = i.raw_message_id
 
--- Aggregate media keys for this raw_message once
-LEFT JOIN LATERAL (
-  SELECT array_agg(DISTINCT mf.s3_key)
-           FILTER (WHERE mf.s3_key IS NOT NULL) AS media_file_s3_keys
-  FROM message_media mm
-  JOIN media_files mf ON mf.id = mm.media_file_id
-  WHERE mm.raw_message_id = i.raw_message_id
-) media ON TRUE
+                    -- Aggregate media keys for this raw_message once
+                    LEFT JOIN LATERAL (
+                    SELECT array_agg(DISTINCT mf.s3_key)
+                            FILTER (WHERE mf.s3_key IS NOT NULL) AS media_file_s3_keys
+                    FROM message_media mm
+                    JOIN media_files mf ON mf.id = mm.media_file_id
+                    WHERE mm.raw_message_id = i.raw_message_id
+                    ) media ON TRUE
 
-LEFT JOIN LATERAL (
-  SELECT json_agg(
-           json_build_object(
-             'id', m.id,
-             'mem0_id', m.mem0_id,
-             'mem0_infered_memory', m.mem0_infered_memory,
-             'created_at', m.created_at,
-             'updated_at', m.updated_at
-           )
-           ORDER BY m.created_at DESC
-         ) AS memory_created
-  FROM memories m
-  WHERE m.raw_message_id = i.raw_message_id
-) mem_created ON TRUE
+                    LEFT JOIN LATERAL (
+                    SELECT json_agg(
+                            json_build_object(
+                                'id', m.id,
+                                'mem0_id', m.mem0_id,
+                                'mem0_infered_memory', m.mem0_infered_memory,
+                                'created_at', m.created_at,
+                                'updated_at', m.updated_at
+                            )
+                            ORDER BY m.created_at DESC
+                            ) AS memory_created
+                    FROM memories m
+                    WHERE m.raw_message_id = i.raw_message_id
+                    ) mem_created ON TRUE
 
-WHERE i.user_id = %s
-ORDER BY i.id DESC
-LIMIT %s;
+                    WHERE i.user_id = %s
+                    ORDER BY i.id DESC
+                    LIMIT %s;
 
                 """
                 values = (user_id, limit)
@@ -505,6 +518,255 @@ LIMIT %s;
             return MediaFile(**dict(result)) if result else None
         except Exception as e:
             logger.error(f"Error in get_media_file_by_hash: {e}")
+            raise
+
+    # Analytics Methods
+    def get_analytics_summary(self) -> Dict[str, Any]:
+        """Get comprehensive analytics summary"""
+        try:
+            return {
+                "summary": self._get_summary_stats(),
+                "user_analytics": self._get_user_analytics(),
+                "memory_analytics": self._get_memory_analytics(),
+                "media_analytics": self._get_media_analytics(),
+                "interaction_analytics": self._get_interaction_analytics()
+            }
+        except Exception as e:
+            logger.error(f"Error in get_analytics_summary: {e}")
+            raise
+
+    def _get_summary_stats(self) -> Dict[str, Any]:
+        """Get basic summary statistics"""
+        try:
+            summary_sql = """
+                SELECT 
+                    (SELECT COUNT(*) FROM users WHERE is_active = true) as total_users,
+                    (SELECT COUNT(*) FROM memories) as total_memories,
+                    (SELECT COUNT(*) FROM interactions) as total_interactions,
+                    (SELECT COUNT(*) FROM raw_messages) as total_messages,
+                    (SELECT COUNT(*) FROM media_files) as total_media_files
+            """
+            result = self.db.select_one(summary_sql)
+            return dict(result) if result else {}
+        except Exception as e:
+            logger.error(f"Error in _get_summary_stats: {e}")
+            raise
+
+    def _get_user_analytics(self) -> Dict[str, Any]:
+        try:
+            # New users this week and month
+            new_users_sql = """
+                SELECT 
+                    COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days') as new_users_this_week,
+                    COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days') as new_users_this_month
+                FROM users
+            """
+            new_users_result = self.db.select_one(new_users_sql)
+
+            # Most active users (by message count)
+            active_users_sql = """
+                SELECT 
+                    u.whatsapp_id,
+                    u.profile_name,
+                    COUNT(rm.id) as message_count,
+                    COUNT(DISTINCT DATE(rm.created_at)) as active_days
+                FROM users u
+                LEFT JOIN raw_messages rm ON u.id = rm.user_id
+                WHERE u.is_active = true
+                GROUP BY u.id, u.whatsapp_id, u.profile_name
+                HAVING COUNT(rm.id) > 0
+                ORDER BY message_count DESC
+                LIMIT 10
+            """
+            active_users = self.db.select_many(active_users_sql)
+
+            # Timezone distribution
+            timezone_sql = """
+                SELECT timezone, COUNT(*) as user_count
+                FROM users 
+                WHERE is_active = true 
+                GROUP BY timezone 
+                ORDER BY user_count DESC
+            """
+            timezone_dist = self.db.select_many(timezone_sql)
+
+            return {
+                "new_users_this_week": new_users_result['new_users_this_week'] if new_users_result else 0,
+                "new_users_this_month": new_users_result['new_users_this_month'] if new_users_result else 0,
+                "most_active_users": [dict(row) for row in active_users] if active_users else [],
+                "timezone_distribution": {row['timezone']: row['user_count'] for row in timezone_dist} if timezone_dist else {}
+            }
+        except Exception as e:
+            logger.error(f"Error in _get_user_analytics: {e}")
+            raise
+
+    def _get_memory_analytics(self) -> Dict[str, Any]:
+        try:
+            # Memory creation stats
+            memory_creation_sql = """
+                SELECT 
+                    COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE) as memories_created_today,
+                    COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days') as memories_created_this_week,
+                    COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days') as memories_created_this_month
+                FROM memories
+            """
+            memory_creation = self.db.select_one(memory_creation_sql)
+
+            # Most frequently sourced memories (from interactions.sources)
+            frequent_sources_sql = """
+                SELECT 
+                    unnest(sources) as mem0_id,
+                    COUNT(*) as usage_count
+                FROM interactions 
+                WHERE sources IS NOT NULL AND array_length(sources, 1) > 0
+                GROUP BY unnest(sources)
+                ORDER BY usage_count DESC
+                LIMIT 10
+            """
+            frequent_sources = self.db.select_many(frequent_sources_sql)
+
+            # Get memory details for the most frequent sources
+            if frequent_sources:
+                mem0_ids = [row['mem0_id'] for row in frequent_sources]
+                placeholders = ','.join(['%s'] * len(mem0_ids))
+                memory_details_sql = f"""
+                    SELECT mem0_id, mem0_infered_memory, user_id
+                    FROM memories 
+                    WHERE mem0_id IN ({placeholders})
+                """
+                memory_details = self.db.select_many(memory_details_sql, tuple(mem0_ids))
+                
+                # Combine usage count with memory details
+                memory_detail_map = {row['mem0_id']: row for row in memory_details}
+                frequent_memories = []
+                for source in frequent_sources:
+                    mem0_id = source['mem0_id']
+                    if mem0_id in memory_detail_map:
+                        memory_info = memory_detail_map[mem0_id]
+                        frequent_memories.append({
+                            "mem0_id": mem0_id,
+                            "usage_count": source['usage_count'],
+                            "memory_text": memory_info['mem0_infered_memory'],
+                            "user_id": memory_info['user_id']
+                        })
+            else:
+                frequent_memories = []
+
+            # Average memories per user
+            avg_memories_sql = """
+                SELECT AVG(memory_count) as avg_memories_per_user
+                FROM (
+                    SELECT user_id, COUNT(*) as memory_count
+                    FROM memories
+                    GROUP BY user_id
+                ) user_memory_counts
+            """
+            avg_memories = self.db.select_one(avg_memories_sql)
+
+            return {
+                "memories_created_today": memory_creation['memories_created_today'] if memory_creation else 0,
+                "memories_created_this_week": memory_creation['memories_created_this_week'] if memory_creation else 0,
+                "memories_created_this_month": memory_creation['memories_created_this_month'] if memory_creation else 0,
+                "most_frequently_sourced": frequent_memories,
+                "avg_memories_per_user": float(avg_memories['avg_memories_per_user']) if avg_memories and avg_memories['avg_memories_per_user'] else 0.0
+            }
+        except Exception as e:
+            logger.error(f"Error in _get_memory_analytics: {e}")
+            raise
+
+    def _get_media_analytics(self) -> Dict[str, Any]:
+        try:
+            # Most forwarded images
+            forwarded_media_sql = """
+                SELECT 
+                    content_type,
+                    forwarded_count,
+                    file_size,
+                    description,
+                    s3_url,
+                    created_at
+                FROM media_files 
+                WHERE forwarded_count > 0
+                ORDER BY forwarded_count DESC
+                LIMIT 10
+            """
+            forwarded_media = self.db.select_many(forwarded_media_sql)
+
+            # Media type distribution
+            media_type_sql = """
+                SELECT content_type, COUNT(*) as count
+                FROM media_files
+                GROUP BY content_type
+                ORDER BY count DESC
+            """
+            media_types = self.db.select_many(media_type_sql)
+
+            # Storage statistics
+            storage_sql = """
+                SELECT 
+                    COUNT(*) as total_files,
+                    SUM(file_size) as total_bytes,
+                    COUNT(*) FILTER (WHERE is_duplicate = true) as duplicate_files,
+                    COUNT(*) FILTER (WHERE is_duplicate = false) as unique_files
+                FROM media_files
+                WHERE file_size IS NOT NULL
+            """
+            storage_stats = self.db.select_one(storage_sql)
+
+            total_storage_mb = 0.0
+            if storage_stats and storage_stats['total_bytes']:
+                total_storage_mb = float(storage_stats['total_bytes']) / (1024 * 1024)
+
+            return {
+                "most_duplicate_uploaded": [dict(row) for row in forwarded_media] if forwarded_media else [],
+                "media_type_distribution": {row['content_type']: row['count'] for row in media_types} if media_types else {},
+                "total_storage_mb": round(total_storage_mb, 2),
+                "total_media_files": storage_stats['total_files'] if storage_stats else 0,
+            }
+        except Exception as e:
+            logger.error(f"Error in _get_media_analytics: {e}")
+            raise
+
+    def _get_interaction_analytics(self) -> Dict[str, Any]:
+        try:
+            # Interaction counts
+            interaction_counts_sql = """
+                SELECT 
+                    COUNT(*) as total_interactions,
+                    COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE) as interactions_today,
+                    COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days') as interactions_this_week
+                FROM interactions
+            """
+            interaction_counts = self.db.select_one(interaction_counts_sql)
+
+            # Interaction type distribution
+            interaction_type_sql = """
+                SELECT interaction_type, COUNT(*) as count
+                FROM interactions
+                GROUP BY interaction_type
+                ORDER BY count DESC
+            """
+            interaction_types = self.db.select_many(interaction_type_sql)
+
+            # Message type statistics
+            message_stats_sql = """
+                SELECT 
+                    COUNT(*) FILTER (WHERE num_media > 0) as messages_with_media,
+                    COUNT(*) FILTER (WHERE num_media = 0) as messages_text_only
+                FROM raw_messages
+            """
+            message_stats = self.db.select_one(message_stats_sql)
+
+            return {
+                "total_interactions": interaction_counts['total_interactions'] if interaction_counts else 0,
+                "interactions_today": interaction_counts['interactions_today'] if interaction_counts else 0,
+                "interactions_this_week": interaction_counts['interactions_this_week'] if interaction_counts else 0,
+                "interaction_type_distribution": {row['interaction_type']: row['count'] for row in interaction_types} if interaction_types else {},
+                "messages_with_media": message_stats['messages_with_media'] if message_stats else 0,
+                "messages_text_only": message_stats['messages_text_only'] if message_stats else 0
+            }
+        except Exception as e:
+            logger.error(f"Error in _get_interaction_analytics: {e}")
             raise
     
 # Global database instance

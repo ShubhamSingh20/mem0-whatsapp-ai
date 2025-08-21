@@ -57,7 +57,7 @@ class MediaFile(BaseModel):
     content_type: Optional[str] = None
     file_size: Optional[int] = None
     file_hash: Optional[str] = None
-    s3_key: Optional[str] = None
+    s3_url: Optional[str] = None
     s3_url: Optional[str] = None
     forwarded_count: int = 0
     description: Optional[str] = None
@@ -249,3 +249,45 @@ class ListMemoriesRequest(BaseModel):
         description="WhatsApp number with country code",
         example="+14155552345"
     )
+
+# Analytics Models
+class UserAnalytics(BaseModel):
+    new_users_this_week: int
+    new_users_this_month: int
+    most_active_users: List[Dict[str, Any]]
+    timezone_distribution: Dict[str, int]
+
+class MemoryAnalytics(BaseModel):
+    memories_created_today: int
+    memories_created_this_week: int
+    memories_created_this_month: int
+    most_frequently_sourced: List[Dict[str, Any]]
+    avg_memories_per_user: float
+
+class MediaAnalytics(BaseModel):
+    most_duplicate_uploaded: List[Dict[str, Any]]
+    media_type_distribution: Dict[str, int]
+    total_storage_mb: float
+    total_media_files: int
+class InteractionAnalytics(BaseModel):
+    total_interactions: int
+    interactions_today: int
+    interactions_this_week: int
+    interaction_type_distribution: Dict[str, int]
+    messages_with_media: int
+    messages_text_only: int
+
+class AnalyticsSummary(BaseModel):
+    total_users: int
+    total_memories: int
+    total_interactions: int
+    total_messages: int
+    total_media_files: int
+
+class AnalyticsResponse(BaseModel):
+    summary: AnalyticsSummary
+    user_analytics: UserAnalytics
+    memory_analytics: MemoryAnalytics
+    media_analytics: MediaAnalytics
+    interaction_analytics: InteractionAnalytics
+    generated_at: datetime

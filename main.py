@@ -5,8 +5,8 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request, Response, Query
 from pydantic import BaseModel, Field
 from twilio.twiml.messaging_response import MessagingResponse
-
-from models import CreateMemoryRequest, GetMemoryRequest, ListMemoriesRequest, WhatsappWebhook
+from datetime import datetime
+from models import CreateMemoryRequest, GetMemoryRequest, ListMemoriesRequest, WhatsappWebhook, AnalyticsResponse
 from service.assistant_layer import AssistantLayer
 from service.database import db_service
 from service.mem0_service import Mem0Service
@@ -34,23 +34,20 @@ def handle_list_command(webhook_data: WhatsappWebhook) -> str:
     if not user_record:
         return "No user found"
     
-    memories = assistant_layer.get_memories_by_user_id(user_record)
+    memories = db_service.list_memories(user_record['id'])
 
     memories_str = ""
-    for memory in memories['memories']:
-        memories_str += f"ID: {memory['id']}\n"
-        memories_str += f"Mem0 ID: {memory['mem0_id']}\n"
-        memories_str += f"Raw Message ID: {memory['raw_message_id']}\n"
-        memories_str += f"Created At: {memory['created_at']}\n"
-        memories_str += f"Updated At: {memory['updated_at']}\n"
-        memories_str += f"Original Message Body: {memory['original_message_body']}\n\n"
+
+    for memory in memories:
+        memories_str += f"ID: {memory['id']} Mem0 ID: {memory['mem0_id']}\n"
+        memories_str += f"Info: {memory['mem0_infered_memory']}\n\n"
+        memories_str += f"--------------------------------\n"
 
     return memories_str
 
 
 @app.post("/webhook")
 async def webhook(request: Request):
-    twiml = MessagingResponse()
     try:
         form = await request.form()
         data = dict(form)
@@ -78,8 +75,10 @@ async def webhook(request: Request):
         )
 
         if webhook_data.body.strip().startswith("/list"):
+            twiml = MessagingResponse()
             output = handle_list_command(webhook_data)
             twiml.message(output)
+            print(twiml)
             return Response(content=str(twiml), media_type="application/xml")
 
         logger.info(f"Processed WhatsApp data: {webhook_data.dict()}")
@@ -98,10 +97,12 @@ async def webhook(request: Request):
             # Fallback to synchronous processing if Redis is unavailable
             logger.warning("Redis unavailable, falling back to synchronous processing")
             response = assistant_layer.process_whatsapp_message(data)
+            print("\n\n", response, "\n\n")
             twiml.message(response)
             return Response(content=str(twiml), media_type="application/xml")
     
     except Exception as e:
+        traceback.print_exc()
         logger.error(f"Webhook error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Webhook processing failed: {str(e)}")
 
@@ -294,9 +295,24 @@ async def get_recent_interactions(
             detail=f"Failed to get recent interactions: {str(e)}"
         )
 
-@app.get("/analytics/summary")
-async def get_analytics_summary(request: Request):
-    return {"message": "Analytics summary retrieved"}
+@app.get("/analytics/summary", response_model=AnalyticsResponse)
+async def get_analytics_summary():
+    try:
+        analytics_data = db_service.get_analytics_summary()
+        
+        # Add generated timestamp
+        analytics_data["generated_at"] = datetime.now()
+        
+        return AnalyticsResponse(**analytics_data)
+        
+    except Exception as e:
+        logger.error(f"Error getting analytics summary: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve analytics summary: {str(e)}"
+        )
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

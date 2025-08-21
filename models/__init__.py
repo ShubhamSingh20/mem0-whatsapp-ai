@@ -14,7 +14,8 @@ from .models import (
     InteractionWithDetails,
     CreateMemoryRequest,
     GetMemoryRequest,
-    ListMemoriesRequest
+    ListMemoriesRequest,
+    AnalyticsResponse,
 )
 
 __all__ = [
@@ -33,5 +34,6 @@ __all__ = [
     "UpdateInteractionRequest",
     "InteractionWithDetails",
     "GetMemoryRequest",
-    "ListMemoriesRequest"
+    "ListMemoriesRequest",
+    "AnalyticsResponse"
 ]
