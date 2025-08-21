@@ -1,5 +1,15 @@
 # Whatsy! - WhatsAPP AI Memory Assistant made with Mem0
 
+## Tech Stack Overview
+
+* **Backend & API**: FastAPI, Uvicorn, Pydantic
+* **Database & Storage**: PostgreSQL, Redis (cache & queue), S3-compatible storage
+* **AI/ML**: Mem0 (memory engine), Google Gemini AI (NLP), PyTZ (timezone)
+* **Messaging**: Twilio WhatsApp API & SDK
+* **Async Processing**: Celery with Redis broker
+* **Utilities**: Hashlib (SHA-256 deduplication), Asyncio, Python-dotenv
+* **Language**: Python 3.x
+
 
 ## Installation and Setup
 
