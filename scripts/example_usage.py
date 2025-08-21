@@ -1,26 +1,15 @@
-# from service.assistant_layer import AssistantLayer
+#!/usr/bin/env python3
+
+# python3 -m scripts.instant_follow_up
+from service import *
+
+def main():
+    user_id = "orange_1"
+
+    # Initialize services
+    mem0_service = Mem0Service()
+    mem0_service.add_memory_direct(user_id, "I love Italian food, especially red sauce asta")
 
 
-# assistant_layer = AssistantLayer()
-
-# message_with_media = assistant_layer.process_whatsapp_message(data)
-
-# print(message_with_media)
-
-
-from service.mem0_service import Mem0Service
-
-mem0_service = Mem0Service()
-
-a = mem0_service.search_memories("1", "websites visited")
-
-for i in a:
-    print(i['memory'])
-# from service.mem0_service import Mem0Service
-
-# mem0_service = Mem0Service()
-
-# memories = mem0_service.get_all_memories("1")
-
-
-# print(mem0_service.search_memories("1", "screenshots"))
+if __name__ == "__main__":
+    main()

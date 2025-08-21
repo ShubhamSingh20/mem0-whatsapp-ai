@@ -6,5 +6,6 @@ from .object_storage import ObjectStorageService
 from .assistant_layer import AssistantLayer
 from .database import DatabaseService, db_service
 from .gemini_service import GeminiService
+from .celery_service import CeleryService   
 
-__all__ = ['TwilioMediaHelper', 'Mem0Service', 'ObjectStorageService', 'AssistantLayer', 'DatabaseService', 'db_service', 'GeminiService']
+__all__ = ['TwilioMediaHelper', 'Mem0Service', 'ObjectStorageService', 'AssistantLayer', 'DatabaseService', 'db_service', 'GeminiService', 'CeleryService']

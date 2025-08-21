@@ -7,10 +7,26 @@ class User(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     
     id: Optional[int] = None
-    whatsapp_id: str
-    phone_number: str
-    timezone: Optional[str] = None
-    profile_name: Optional[str] = None
+    whatsapp_id: str = Field(
+        ...,
+        description="WhatsApp ID (usually same as phone number)",
+        example="+14155552345"
+    )
+    phone_number: str = Field(
+        ...,
+        description="Phone number with country code",
+        example="+14155552345"
+    )
+    timezone: Optional[str] = Field(
+        default=None,
+        description="User's timezone",
+        example="America/New_York"
+    )
+    profile_name: Optional[str] = Field(
+        default=None,
+        description="User's profile name from WhatsApp",
+        example="John Doe"
+    )
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     is_active: bool = True
@@ -92,9 +108,21 @@ class Interaction(BaseModel):
 
 # Request/Response models for API
 class CreateUserRequest(BaseModel):
-    whatsapp_id: str
-    phone_number: str
-    profile_name: Optional[str] = None
+    whatsapp_id: str = Field(
+        ...,
+        description="WhatsApp ID (usually same as phone number)",
+        example="+14155552345"
+    )
+    phone_number: str = Field(
+        ...,
+        description="Phone number with country code",
+        example="+14155552345"
+    )
+    profile_name: Optional[str] = Field(
+        default=None,
+        description="User's profile name from WhatsApp",
+        example="John Doe"
+    )
 
 class CreateMessageRequest(BaseModel):
     user_id: int
@@ -158,22 +186,58 @@ class WhatsappWebhook(BaseModel):
 
 class CreateMemoryRequest(BaseModel):
     # Either whatsapp_number OR user_id must be provided
-    whatsapp_number: str = None
+    whatsapp_number: str = Field(
+        ..., 
+        description="WhatsApp number with country code", 
+        example="+14155552345"
+    )
     
-    memory_text: str
-    memory_type: Optional[str] = "user_info"
-    metadata: Optional[Dict[str, Any]] = None
+    memory_text: str = Field(
+        ..., 
+        description="The memory text to store",
+        example="User prefers vegetarian food and likes spicy cuisine"
+    )
+    memory_type: Optional[str] = Field(
+        default="user_info",
+        description="Type of memory being stored",
+        example="user_info"
+    )
+    metadata: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Additional metadata for the memory",
+        example={"source": "conversation", "confidence": 0.9}
+    )
 
 class GetMemoryRequest(BaseModel):
     # Either whatsapp_number OR user_id must be provided
-    whatsapp_number: Optional[str] = None
-    user_id: Optional[int] = None
+    whatsapp_number: Optional[str] = Field(
+        default=None,
+        description="WhatsApp number with country code",
+        example="+14155552345"
+    )
+    user_id: Optional[int] = Field(
+        default=None,
+        description="User ID from database",
+        example=123
+    )
     
     # Optional query to search for specific memories
-    query: Optional[str] = None
+    query: Optional[str] = Field(
+        default=None,
+        description="Search query to filter memories",
+        example="food preferences"
+    )
     
     # Optional limit for results
-    limit: Optional[int] = 10
+    limit: Optional[int] = Field(
+        default=10,
+        description="Maximum number of results to return",
+        example=10
+    )
 
 class ListMemoriesRequest(BaseModel):
-    whatsapp_number: str
+    whatsapp_number: str = Field(
+        ...,
+        description="WhatsApp number with country code",
+        example="+14155552345"
+    )

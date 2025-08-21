@@ -2,7 +2,7 @@ import logging
 from typing import List, Optional
 import traceback
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response, Query
 from pydantic import BaseModel, Field
 from twilio.twiml.messaging_response import MessagingResponse
 
@@ -10,6 +10,7 @@ from models import CreateMemoryRequest, GetMemoryRequest, ListMemoriesRequest, W
 from service.assistant_layer import AssistantLayer
 from service.database import db_service
 from service.mem0_service import Mem0Service
+from service.celery_service import celery_service
 from utils import infer_timezone_from_number
 
 logging.basicConfig(level=logging.INFO)
@@ -25,13 +26,34 @@ app = FastAPI(
 assistant_layer = AssistantLayer()
 mem0_service = Mem0Service()
 
+def handle_list_command(webhook_data: WhatsappWebhook) -> str:
+    user_record = db_service.get_user_by_whatsapp_number(
+        webhook_data.from_.replace("whatsapp:", "")
+    )
+
+    if not user_record:
+        return "No user found"
+    
+    memories = assistant_layer.get_memories_by_user_id(user_record)
+
+    memories_str = ""
+    for memory in memories['memories']:
+        memories_str += f"ID: {memory['id']}\n"
+        memories_str += f"Mem0 ID: {memory['mem0_id']}\n"
+        memories_str += f"Raw Message ID: {memory['raw_message_id']}\n"
+        memories_str += f"Created At: {memory['created_at']}\n"
+        memories_str += f"Updated At: {memory['updated_at']}\n"
+        memories_str += f"Original Message Body: {memory['original_message_body']}\n\n"
+
+    return memories_str
+
+
 @app.post("/webhook")
 async def webhook(request: Request):
     twiml = MessagingResponse()
     try:
         form = await request.form()
         data = dict(form)
-
 
         logger.info(f"Incoming WhatsApp webhook data: {data}")
 
@@ -56,43 +78,29 @@ async def webhook(request: Request):
         )
 
         if webhook_data.body.strip().startswith("/list"):
-            user_record = db_service.get_user_by_whatsapp_number(
-                webhook_data.from_.replace("whatsapp:", "")
-            )
-
-            if not user_record:
-                twiml.message("No user found")
-                return Response(content=str(twiml), media_type="application/xml")
-            
-            memories = assistant_layer.get_memories_by_user_id(user_record)
-
-            memories_str = ""
-            for memory in memories['memories']:
-                memories_str += f"ID: {memory['id']}\n"
-                memories_str += f"Mem0 ID: {memory['mem0_id']}\n"
-                memories_str += f"Raw Message ID: {memory['raw_message_id']}\n"
-                memories_str += f"Created At: {memory['created_at']}\n"
-                memories_str += f"Updated At: {memory['updated_at']}\n"
-                memories_str += f"Original Message Body: {memory['original_message_body']}\n\n"
-
-            twiml.message(memories_str.strip() or "No memories found")
+            output = handle_list_command(webhook_data)
+            twiml.message(output)
             return Response(content=str(twiml), media_type="application/xml")
 
         logger.info(f"Processed WhatsApp data: {webhook_data.dict()}")
 
-        # Process the message using MemoryService
-        try:
+        # Try to enqueue the message for asynchronous processing
+        twiml = MessagingResponse()
+
+        if celery_service.is_redis_available():
+            task_id = celery_service.enqueue_webhook_message(data)
+            logger.info(f"Message enqueued with task ID: {task_id}")
+            
+            # Send acknowledgment response
+            twiml.message("processing ⚙️...")
+            return Response(content=str(twiml), media_type="application/xml")
+        else:
+            # Fallback to synchronous processing if Redis is unavailable
+            logger.warning("Redis unavailable, falling back to synchronous processing")
             response = assistant_layer.process_whatsapp_message(data)
             twiml.message(response)
-
             return Response(content=str(twiml), media_type="application/xml")
     
-        except Exception as processing_error:
-            print(traceback.format_exc())
-            logger.error(f"Error processing message: {str(processing_error)}")
-            
-            return Response(content=str(twiml), media_type="application/xml")
-            
     except Exception as e:
         logger.error(f"Webhook error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Webhook processing failed: {str(e)}")
@@ -155,9 +163,8 @@ async def create_memory(memory_request: CreateMemoryRequest):
 
 @app.get("/memories")
 async def get_memories(
-    whatsapp_number: Optional[str] = None,
-    query: Optional[str] = None,
-    limit: Optional[int] = 10
+    whatsapp_number: Optional[str] = Query(None, description="WhatsApp number with country code", example="+14155552345"),
+    query: Optional[str] = Query(None, description="Search query to filter memories", example="food preferences"),
 ):
     """
     Get memories for a user identified by whatsapp_number or user_id.
@@ -201,7 +208,7 @@ async def get_memories(
                 },
                 "query": query,
                 "results_count": len(search_results),
-                "search_results": search_results[:limit] if limit else search_results
+                "search_results": search_results
             }
             
         except Exception as search_error:
@@ -250,15 +257,42 @@ async def list_memories(request: ListMemoriesRequest):
         raise
     except Exception as e:
         logger.error(f"Error listing memories: {str(e)}")
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
             detail=f"Failed to list memories: {str(e)}"
         )
 
 @app.get("/interactions/recent")
-async def get_recent_interactions(request: Request):
-    limit = request.query_params.get("limit", 10)
-    return {"message": "Recent interactions retrieved"}
+async def get_recent_interactions(
+    whatsapp_number: str = Query(..., description="WhatsApp number with country code", example="+14155552345"),
+    limit: int = Query(10, description="Maximum number of interactions to return", example=10)
+):
+    if not whatsapp_number:
+        raise HTTPException(
+            status_code=400,
+            detail="whatsapp_number is required"
+        )
+    user = db_service.get_user_by_whatsapp_number(whatsapp_number)
+
+    if not user:
+        raise HTTPException(
+            status_code=404,
+            detail=f"User not found with WhatsApp number: {whatsapp_number}"
+        )
+    
+    user_id = user['id']
+    
+    try:
+        interactions = assistant_layer.get_recent_interactions(user_id, limit)
+        return interactions
+    except Exception as e:
+        traceback.print_exc()
+        logger.error(f"Error getting recent interactions: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get recent interactions: {str(e)}"
+        )
 
 @app.get("/analytics/summary")
 async def get_analytics_summary(request: Request):
