@@ -348,7 +348,7 @@ Please use these memories as context to answer the original query:
                     end_date = datetime.strptime(end_date, "%Y-%m-%d")
 
                     # localize to user tz
-                    tz = pytz.timezone(user_timezone or "Asia/Calcutta")
+                    tz = pytz.timezone(user_timezone or "UTC")
                     start_date = tz.localize(start_date)
                     end_date = tz.localize(end_date) + timedelta(days=1)  # make end exclusive
 

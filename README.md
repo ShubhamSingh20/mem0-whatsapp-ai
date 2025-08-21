@@ -1,116 +1,154 @@
-# WhatsApp AI Memory Bot
+# WhatsApp AI Memory Assistant
 
-A production-ready WhatsApp AI chatbot with intelligent memory management, built with FastAPI, PostgreSQL, and Mem0. The system handles media processing, maintains conversation context, and implements robust data integrity patterns.
+## Required Configuration Keys and Instruments
 
-## Core Technical Approaches
+This project requires several external services and API keys to function properly. Create a `.env` file in the project root with the following environment variables:
 
-### 🔄 Idempotency & Duplicate Prevention
+### Database Configuration (PostgreSQL)
+```env
+POSTGRES_DB=your_database_name
+POSTGRES_USER=your_username
+POSTGRES_PASSWORD=your_password
+POSTGRES_URL=your_postgres_host
+POSTGRES_PORT=5432
+```
 
-**Message Processing Idempotency**
-- Uses `message_sid` (Twilio's unique identifier) as the primary deduplication key
-- Database method `get_raw_message_by_sid()` checks for existing messages before processing
-- Returns existing message IDs instead of creating duplicates when webhooks are retried
-- Prevents double-processing of the same WhatsApp message across webhook retries
+### Object Storage (S3-Compatible)
+For storing media files (images, audio, documents) from WhatsApp messages:
+```env
+BUCKET_URL=your_s3_endpoint_url
+BUCKET_NAME=your_bucket_name
+BUCKET_ACCESS_KEY=your_access_key
+BUCKET_SECRET_KEY=your_secret_key
+```
 
-**Memory Storage Idempotency** 
-- `store_memory()` checks for existing memories linked to the same `raw_message_id`
-- Returns existing memory IDs when duplicates are detected
-- Prevents creating multiple memory entries for the same conversation turn
-- Direct memory creation via API uses separate `store_memory_direct()` method
+### Twilio WhatsApp API
+For WhatsApp messaging integration:
+```env
+TWILIO_ACCOUNT_SID=your_twilio_account_sid
+TWILIO_AUTH_TOKEN=your_twilio_auth_token
+TWILIO_PHONE_NUMBER=yout_twilio_given_phno
+```
 
-**Media File Deduplication**
-- Uses SHA256 file hashing to detect identical media content
-- `store_media_file()` checks for existing files with the same `file_hash`
-- Increments `forwarded_count` instead of storing duplicate files
-- Saves storage costs and maintains referential integrity
+### Mem0 AI Service
+For AI memory management:
+```env
+MEM0_API_KEY=your_mem0_api_key
+```
 
-### 🌍 Timezone Handling
+### Google Cloud (Gemini AI)
+For AI processing capabilities:
+```env
+GOOGLE_APPLICATION_CREDENTIALS=path_to_your_service_account_json_file
+```
 
-**Automatic Timezone Detection**
-- Uses `phonenumbers` library to infer timezone from WhatsApp phone numbers
-- `infer_timezone_from_number()` extracts country-specific timezone (e.g., `Asia/Kolkata`)
-- Stores user timezone in the `users` table for consistent time calculations
+### Redis (for Celery Task Queue)
+For asynchronous message processing:
+```env
+REDIS_HOST=your_redis_host
+REDIS_PORT=6379
+REDIS_DB=0
+REDIS_PASSWORD=your_redis_password
+```
 
-**UTC Standardization**
-- All database timestamps stored in UTC using PostgreSQL's `CURRENT_TIMESTAMP`
-- Memory metadata includes UTC timestamps for consistent cross-timezone querying
-- Gemini service converts user-local time queries to UTC for accurate memory filtering
+## Required External Services
 
-**Time-based Memory Queries**
-- LLM function calls can specify date ranges in user's local timezone
-- Automatic conversion from user timezone to UTC for database queries
-- Supports queries like "meetings this week" with proper timezone context
+### 1. PostgreSQL Database
+- Install and configure a PostgreSQL instance
+- Run the migration scripts in the `migrations/` folder to set up the database schema
+- Ensure the database is accessible from your application
 
-### 📊 Data Integrity Patterns
+### 2. Redis Server
+- Required for Celery task queue management
+- Install Redis server or use a cloud Redis service
+- Used for asynchronous processing of WhatsApp messages
 
-**Unique Constraints**
-- `message_sid` ensures no duplicate message processing
-- `phone_number` prevents multiple user accounts for same WhatsApp number
-- `mem0_id` maintains one-to-one mapping between local and Mem0 memories
+### 3. S3-Compatible Object Storage
+- For storing media files from WhatsApp messages
+- Can use AWS S3, MinIO, or any S3-compatible storage service
+- Ensure proper read/write permissions are configured
 
-**Cascading Deletes**
-- User deletion cascades to messages, memories, and interactions
-- Raw message deletion automatically removes associated memories
-- Maintains referential integrity across the entire data model
+### 4. Twilio Account
+- Sign up for Twilio account
+- Configure WhatsApp Business API sandbox or production account
+- Set up webhook URL pointing to your `/webhook` endpoint
 
-**Connection Pooling & Retry Logic**
-- PostgreSQL connection pooling prevents connection exhaustion
-- Automatic retry on `psycopg2.OperationalError` for connection recovery
-- Graceful handling of database connection failures
+### 5. Mem0 AI Service
+- Sign up for Mem0 AI service
+- Obtain API key for memory management functionality
 
-## Installation & Setup
+### 6. Google Cloud Platform
+- Create a GCP project
+- Enable Gemini AI API
+- Create a service account and download the JSON credentials file
+- Set the path to this file in `GOOGLE_APPLICATION_CREDENTIALS`
 
-1. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+## Database Schema
 
-2. **Configure environment variables**
-   - Set up PostgreSQL connection details in `configs.py`
-   - Add Mem0 API key for memory management
-   - Configure Gemini API for AI processing
-   - Set up Twilio credentials for WhatsApp integration
+The application uses a PostgreSQL database with the following structure:
 
-3. **Initialize database**
-   ```bash
-   # Run migrations in order
-   psql -d your_db -f migrations/001_create_users.sql
-   psql -d your_db -f migrations/002_create_raw_message.sql
-   psql -d your_db -f migrations/003_create_media.sql
-   psql -d your_db -f migrations/004_create_memories.sql
-   psql -d your_db -f migrations/005_create_interactions.sql
-   ```
+![Database Schema](er-diagram.svg)
 
-## API Endpoints
+The database schema includes tables for:
+- **users**: Store WhatsApp user information
+- **raw_messages**: Store incoming WhatsApp messages
+- **media**: Store media file metadata
+- **memories**: Store AI-generated memories
+- **interactions**: Track user interactions
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/webhook` | WhatsApp webhook for message processing |
-| POST | `/memories` | Create memory for a user |
-| GET | `/memories` | Search/retrieve user memories |
-| POST | `/memories/list` | List all memories for a user |
+For detailed schema definitions, see the migration files in the `migrations/` folder.
 
-## Key Features
+## Installation and Setup
 
-- **Intelligent Memory Management**: Automatically stores and retrieves conversation context using Mem0
-- **Media Processing**: Handles images, videos, audio with Gemini analysis and cloud storage
-- **Duplicate Prevention**: Robust idempotency ensures no data duplication across webhook retries
-- **Timezone Awareness**: Automatic timezone detection and proper UTC conversion for global users
-- **Production Ready**: Connection pooling, error handling, and comprehensive logging
+1. Install Python dependencies:
+```bash
+pip install -r requirements.txt
+```
 
-## Architecture Benefits
+2. Set up your `.env` file with all the required configuration keys listed above
 
-- **Data Consistency**: Idempotent operations prevent corruption from retries/failures
-- **Storage Efficiency**: File deduplication reduces cloud storage costs
-- **Global Support**: Proper timezone handling for international users
-- **Scalability**: Connection pooling and efficient database queries support high load
-- **Reliability**: Comprehensive error handling and graceful degradation
+3. Run database migrations:
+```bash
+# Execute the SQL files in migrations/ folder in order
+```
 
-## Development Notes
+4. Start the Celery worker (for asynchronous processing):
+```bash
+python scripts/start_worker.py
+```
 
-This system demonstrates production-level patterns for:
-- Webhook idempotency in distributed systems
-- Content-based deduplication strategies  
-- Cross-timezone data handling
-- Robust database connection management
-- AI-powered conversation memory
+5. Run the main application:
+```bash
+uvicorn main:app --reload --port 8000
+```
+
+The application will start on `http://localhost:8000` and be ready to receive WhatsApp webhooks at `/webhook`.
+
+Swagger docs and API endpoints can be accessed at `http://localhost:8000/docs`
+
+# Notes
+## 1. Media Deduplication
+
+* Each media file gets a SHA-256 hash.
+* Before saving, the system checks if the hash already exists.
+* If duplicate: reuse the record, increment a forward/share counter, and link it to the new message without re-uploading.
+* Only unique files go to S3, saving storage and bandwidth.
+* Tracks how many times a file is reused.
+
+## 2. Timezone Handling
+
+* User’s timezone is inferred at registration (fallback: UTC).
+* All timestamps are stored in UTC.
+* When users ask time-based queries (“today”, “last week”), the system:
+
+* Detects date ranges, converts them to UTC with `pytz`.
+* Adjusts end dates to be exclusive for accurate filtering.
+* Applies these filters to memory search.
+
+## 3. Twilio Ingestion Idempotency
+* Each Twilio message is keyed by its unique `MessageSid`.
+* Before processing, the system checks if the SID already exists.
+* If duplicate: logs it, returns the existing bot response, and skips reprocessing (including media and AI calls).
+* Ensures database consistency, reduces API cost, and keeps user responses consistent.
+
+

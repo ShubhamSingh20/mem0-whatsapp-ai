@@ -1,5 +1,5 @@
 import requests
-from configs import TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN
+from configs import TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER
 from twilio.rest import Client
 
 class TwilioMediaHelper:
@@ -11,7 +11,7 @@ class TwilioMediaHelper:
     def send_message(self, to: str, body: str):
         message = self.client.messages.create(
             to=f"{to}",
-            from_="whatsapp:+14155238886",
+            from_=f"whatsapp:{TWILIO_PHONE_NUMBER}",
             body=body
         )
         return message
