@@ -34,7 +34,7 @@ get_memory_function = types.FunctionDeclaration(
 
 store_memory_function = types.FunctionDeclaration(
     name="store_memory",
-    description="Store new information as a memory when the user shares likes/dislikes, something useful, makes a decision, completes a task, introduces new entities, or provides feedback/clarification. Summarize the memory in a concise format.",
+    description="Store new information as a memory when the user shares likes/dislikes, something useful, makes a decision, completes a task, introduces new entities, or provides feedback/clarification. Summarize the memory in a concise format. If the user has sent a media attachment, store the description details of the media attachment in the memory.",
     parameters=types.Schema(
         type=types.Type.OBJECT,
         properties={
@@ -214,6 +214,7 @@ You are a helpful AI assistant named Whatsy! with access to memory functions. Yo
 3. You have been provided with the conversation history of the user, to help better answer follow up questions.
 4. Use store_memory to save important information from users chat:
     This includes:
+    * Always store the details of the media attachments that user has sent.
     * Preferences: likes, dislikes, favorites (e.g., “I prefer Italian food”).
     * Decisions: commitments, choices, or resolutions (e.g., “I’ll go with the cheaper plan”).
     * Tasks & Plans: to-dos, reminders, schedules, or events (e.g., “I need to call mom tomorrow”).
@@ -221,7 +222,6 @@ You are a helpful AI assistant named Whatsy! with access to memory functions. Yo
     * Feedback: opinions about the assistant or the experience (e.g., “Please answer more briefly next time”).
     * Entities: names of people, places, pets, organizations, or other recurring references.
     * Do not store trivial acknowledgements (e.g., “hi”, “ok”, “thanks”) or ephemeral chit-chat that has no future value.
-
 
 When you retrieve memories, use them to provide more informed responses.
 Always be conversational and helpful and at the same time be concise and to the point, do not be verbose.
@@ -231,9 +231,10 @@ Always be conversational and helpful and at the same time be concise and to the 
         user_prompt = f"""
 User : {query}
 """
+        
 
         if attached_media_files:
-            user_prompt += f"\nUser Attached Following Media Files: \n\n{attached_media_files}"
+            user_prompt += f"\nUser Attached Following Media Files: \n\n{'\n'.join(attached_media_files)}"
 
         contents = [
             types.Content(

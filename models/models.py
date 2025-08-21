@@ -53,7 +53,6 @@ class MediaFile(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     
     id: Optional[int] = None
-    raw_message_id: int
     media_sid: Optional[str] = None
     content_type: Optional[str] = None
     file_size: Optional[int] = None
@@ -64,6 +63,13 @@ class MediaFile(BaseModel):
     description: Optional[str] = None
     created_at: Optional[datetime] = None
 
+class MessageMedia(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    id: Optional[int] = None
+    raw_message_id: int
+    media_file_id: int
+    created_at: Optional[datetime] = None
 
 class Memory(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -103,6 +109,7 @@ class Interaction(BaseModel):
     tokens_used: Optional[int] = None
     context_data: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
+    sources: Optional[List[str]] = None  # List of mem0_ids used as sources for the response
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -159,6 +166,7 @@ class UpdateInteractionRequest(BaseModel):
     model_used: Optional[str] = None
     tokens_used: Optional[int] = None
     error_message: Optional[str] = None
+    sources: Optional[List[str]] = None
 
 class InteractionWithDetails(BaseModel):
     model_config = ConfigDict(from_attributes=True)

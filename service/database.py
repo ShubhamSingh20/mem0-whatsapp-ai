@@ -10,6 +10,7 @@ import phonenumbers
 
 import json
 from configs import postgres_db, postgres_userName, postgres_password, postgres_url, postgres_port
+from models.models import MediaFile, RawMessage, User
 
 logger = logging.getLogger(__name__)
 
@@ -146,19 +147,17 @@ class DatabaseService:
 
     def get_or_create_user(self, whatsapp_id: str, phone_number: str, 
                           profile_name: Optional[str] = None, 
-                          timezone: str = 'UTC') -> int:
+                          timezone: str = 'UTC') -> User:
         try:
             # First, try to get existing user
-            select_sql = "SELECT id FROM users WHERE whatsapp_id = %s"
-            
-            logger.info(f"Checking for existing user with whatsapp_id: {whatsapp_id}")
-            logger.debug(f"Select query: {select_sql}")
+            select_sql = "SELECT * FROM users WHERE whatsapp_id = %s"
             
             result = self.db.select_one(select_sql, (whatsapp_id,))
             
             if result:
                 logger.info(f"Found existing user with ID: {result['id']}")
-                return result['id']
+
+                return User(**dict(result))
             
             # User doesn't exist, create new one
             insert_sql = """
@@ -167,14 +166,10 @@ class DatabaseService:
                 RETURNING id
             """
             
-            logger.info(f"Creating new user with whatsapp_id: {whatsapp_id}")
-            logger.debug(f"Insert query: {insert_sql}")
+            user = self.db.insert(insert_sql, (whatsapp_id, phone_number, profile_name, timezone))
             
-            user_id = self.db.insert(insert_sql, (whatsapp_id, phone_number, profile_name, timezone))
-            
-            if user_id:
-                logger.info(f"Created new user with ID: {user_id}")
-                return user_id
+            if user:
+                return User(**dict(self.db.select_one(f"SELECT * FROM users WHERE id = {user}", ())))
             else:
                 raise Exception("Failed to create user - no ID returned")
                 
@@ -184,10 +179,11 @@ class DatabaseService:
             logger.error(f"Error in get_or_create_user: {e}")
             raise
 
-    def get_raw_message_by_sid(self, message_sid: str) -> Optional[Dict[str, Any]]:
+    def get_raw_message_by_sid(self, message_sid: str) -> Optional[RawMessage]:
         try:
             select_sql = "SELECT * FROM raw_messages WHERE message_sid = %s"
-            return self.db.select_one(select_sql, (message_sid,))
+            result = self.db.select_one(select_sql, (message_sid,))
+            return RawMessage(**dict(result)) if result else None
         except Exception as e:
             logger.error(f"Error in get_raw_message_by_sid: {e}")
             raise
@@ -197,13 +193,12 @@ class DatabaseService:
                         status: str = 'received', num_media: int = 0,
                         account_sid: Optional[str] = None, api_version: Optional[str] = None,
                         sms_message_sid: Optional[str] = None,
-                        raw_data: Optional[Dict[str, Any]] = None) -> int:
+                        raw_data: Optional[Dict[str, Any]] = None) -> RawMessage:
         try:
             # Check if message already exists (idempotency check)
             existing_message = self.get_raw_message_by_sid(message_sid)
             if existing_message:
-                logger.info(f"Message with SID {message_sid} already exists with ID: {existing_message['id']}")
-                return existing_message['id']
+                return existing_message
             
             # Message doesn't exist, proceed with insertion
             insert_sql = """
@@ -213,7 +208,6 @@ class DatabaseService:
                 RETURNING id
             """
             
-            logger.info(f"Storing new raw message for user_id: {user_id}, message_sid: {message_sid}")
             logger.debug(f"Insert query: {insert_sql}")
             
             # Convert raw_data to JSON string if provided
@@ -223,66 +217,64 @@ class DatabaseService:
                 insert_sql, 
                 (user_id, message_sid, sms_message_sid, body, message_type, from_number, to_number, status, num_media, account_sid, api_version, raw_data_json)
             )
+
+            result = self.db.select_one(f"SELECT * FROM raw_messages WHERE id = {message_id}", ())
+            return RawMessage(**dict(result)) if result else None
             
-            if message_id:
-                logger.info(f"Stored new raw message with ID: {message_id}")
-                return message_id
-            else:
-                raise Exception("Failed to store raw message - no ID returned")
-                
         except Exception as e:
             logger.error(f"Error in store_raw_message: {e}")
             raise
 
-    def store_media_file(self, raw_message_id: int, media_sid: Optional[str],
+    def store_media_file(self, media_sid: Optional[str],
                         content_type: Optional[str],
                         file_size: Optional[int], file_hash: Optional[str],
                         s3_key: Optional[str], s3_url: Optional[str],
-                        description: Optional[str] = None) -> int:
+                        description: Optional[str] = None):
         try:
-            # Check for existing file with same hash to avoid duplicates
-            existing_file = None
-            if file_hash:
-                select_sql = "SELECT id FROM media_files WHERE file_hash = %s"
-                existing_file = self.db.select_one(select_sql, (file_hash,))
-            
-            if existing_file:
-                logger.info(f"Media file already exists with ID: {existing_file['id']}")
+            insert_sql = """
+                INSERT INTO media_files 
+                (media_sid, content_type, file_size, file_hash, s3_key, s3_url, description, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                RETURNING id
+            """
 
-                # Increment forwarded count
-                update_sql = "UPDATE media_files SET forwarded_count = forwarded_count + 1 WHERE id = %s"
-                self.db.update_delete(update_sql, (existing_file['id'],))
+            media_file = self.db.insert(
+                insert_sql,
+                (media_sid, content_type, file_size, file_hash, s3_key, s3_url, description)
+            )
 
-                return existing_file['id']
-            else:
-                # Store as new original file
-                insert_sql = """
-                    INSERT INTO media_files 
-                    (raw_message_id, media_sid, content_type, file_size, file_hash, s3_key, s3_url, description, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
-                    RETURNING id
-                """
-                
-                logger.info(f"Storing new media file for message_id: {raw_message_id}")
-                
-                media_id = self.db.insert(
-                    insert_sql,
-                    (raw_message_id, media_sid, content_type, file_size, file_hash, s3_key, s3_url, description)
-                )
+            return MediaFile(**dict(self.db.select_one(f"SELECT * FROM media_files WHERE id = {media_file}", ())))
             
-            if media_id:
-                logger.info(f"Stored media file with ID: {media_id}")
-                return media_id
-            else:
-                raise Exception("Failed to store media file - no ID returned")
-                
         except Exception as e:
             logger.error(f"Error in store_media_file: {e}")
             raise
+    
+    def associate_media_with_message(self, raw_message_id: int, media_file_id: int):
+        """Associate a media file with a message through the pivot table."""
+        try:
+            insert_sql = """
+                INSERT INTO message_media (raw_message_id, media_file_id, created_at)
+                VALUES (%s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (raw_message_id, media_file_id) DO NOTHING
+                RETURNING id
+            """
+            
+            self.db.insert(insert_sql, (raw_message_id, media_file_id))
+                
+        except Exception as e:
+            logger.error(f"Error in associate_media_with_message: {e}")
+            raise
 
     def get_media_files_by_message_id(self, raw_message_id: int) -> List[Dict[str, Any]]:
+        """Get all media files associated with a message via the pivot table."""
         try:
-            select_sql = "SELECT * FROM media_files WHERE raw_message_id = %s ORDER BY created_at"
+            select_sql = """
+                SELECT mf.* 
+                FROM media_files mf
+                INNER JOIN message_media mm ON mf.id = mm.media_file_id
+                WHERE mm.raw_message_id = %s 
+                ORDER BY mm.created_at
+            """
             return self.db.select_many(select_sql, (raw_message_id,))
         except Exception as e:
             logger.error(f"Error getting media files for message {raw_message_id}: {e}")
@@ -306,7 +298,6 @@ class DatabaseService:
                 RETURNING id
             """
             memory_id = self.db.insert(insert_sql, (user_id, raw_message_id, mem0_id, mem0_infered_memory))
-            logger.info(f"Stored new memory with ID: {memory_id}")
             return memory_id
         except Exception as e:
             logger.error(f"Error in store_memory: {e}")
@@ -338,7 +329,6 @@ class DatabaseService:
                 RETURNING id
             """
             memory_id = self.db.insert(insert_sql, (user_id, mem0_id))
-            logger.info(f"Stored new direct memory with ID: {memory_id}")
             return memory_id
         except Exception as e:
             logger.error(f"Error in store_memory_direct: {e}")
@@ -380,44 +370,70 @@ class DatabaseService:
             logger.error(f"Error in get_memories_by_user_id: {e}")
             raise
 
+    def increment_forwarded_count(self, media_file_id: int):
+        try:
+            update_sql = "UPDATE media_files SET forwarded_count = forwarded_count + 1 WHERE id = %s"
+            self.db.update_delete(update_sql, (media_file_id,))
+        except Exception as e:
+            logger.error(f"Error in increment_forwarded_count: {e}")
+            raise
+
     def get_all_memories_with_user_info(self, user_id: int) -> List[Dict[str, Any]]:
         try:
             select_sql = """
-                SELECT 
-                    m.id,
-                    m.user_id,
-                    m.raw_message_id,
-                    m.mem0_id,
-                    m.created_at,
-                    m.updated_at,
-                    u.whatsapp_id,
-                    u.phone_number,
-                    u.profile_name,
-                    u.timezone,
-                    rm.body as original_message_body,
-                    rm.message_type,
-                    ARRAY_AGG(mf.s3_key) FILTER (WHERE mf.s3_key IS NOT NULL) as media_file_s3_keys
+                SELECT
+                rm.id                              AS raw_message_id,
+                rm.body                            AS original_message_body,
+                rm.message_type,
+                rm.created_at                      AS message_created_at,
+                media.media_file_s3_keys,
+                COALESCE(mem.memories, '[]'::json) AS memories
+                FROM raw_messages rm
+                JOIN LATERAL (
+                SELECT json_agg(
+                        json_build_object(
+                            'id', m.id,
+                            'mem0_id', m.mem0_id,
+                            'mem0_infered_memory', m.mem0_infered_memory,
+                            'created_at', m.created_at,
+                            'updated_at', m.updated_at
+                        )
+                        ORDER BY m.created_at DESC
+                        ) AS memories
                 FROM memories m
-                JOIN users u ON m.user_id = u.id
-                LEFT JOIN raw_messages rm ON m.raw_message_id = rm.id
-                LEFT JOIN media_files mf ON rm.id = mf.raw_message_id
-                WHERE m.user_id = %s
-                GROUP BY m.id, m.user_id, m.raw_message_id, m.mem0_id, m.created_at, m.updated_at, u.whatsapp_id, u.phone_number, u.profile_name, u.timezone, rm.body, rm.message_type
-                ORDER BY m.created_at DESC
+                WHERE m.raw_message_id = rm.id
+                ) mem ON TRUE
+                -- media files tied to this message (not to memories)
+                LEFT JOIN LATERAL (
+                SELECT array_agg(DISTINCT mf.s3_key)
+                        FILTER (WHERE mf.s3_key IS NOT NULL) AS media_file_s3_keys
+                FROM message_media mm
+                JOIN media_files mf ON mf.id = mm.media_file_id
+                WHERE mm.raw_message_id = rm.id
+                ) media ON TRUE
+                -- optional: restrict to a specific user (keeps only messages that produced memories for that user)
+                WHERE EXISTS (
+                SELECT 1
+                FROM memories m2
+                WHERE m2.raw_message_id = rm.id
+                    AND m2.user_id = %s
+                )
+                ORDER BY rm.created_at DESC;
+
             """
             return self.db.select_many(select_sql, (user_id,))
         except Exception as e:
             logger.error(f"Error in get_all_memories_with_user_info: {e}")
             raise
 
-    def store_interaction(self, user_id: int, raw_message_id: int, user_message: str, bot_response: str, interaction_type: str) -> int:
+    def store_interaction(self, user_id: int, raw_message_id: int, user_message: str, bot_response: str, interaction_type: str, sources: Optional[List[str]] = None) -> int:
         try:
             insert_sql = """
-                INSERT INTO interactions (user_id, raw_message_id, user_message, bot_response, interaction_type, created_at)
-                VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                INSERT INTO interactions (user_id, raw_message_id, user_message, bot_response, interaction_type, sources, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
                 RETURNING id
             """
-            return self.db.insert(insert_sql, (user_id, raw_message_id, user_message, bot_response, interaction_type))
+            return self.db.insert(insert_sql, (user_id, raw_message_id, user_message, bot_response, interaction_type, sources))
         except Exception as e:
             logger.error(f"Error in store_interaction: {e}")
             raise
@@ -428,44 +444,49 @@ class DatabaseService:
             if detailed:
                 # detailed query with memory_id and raw_message_id and media_files if any
                 select_sql = """
-                    select
-                        i.id,
-                        i.raw_message_id,
-                        i.user_message,
-                        i.bot_response,
-                        coalesce(rm.body, 'NO_TEXT_ONLY_MEDIA') as original_message_body,
-                        rm.message_type,
-                        ARRAY_AGG(mf.s3_key) filter (
-                        where mf.s3_key is not null) as media_file_s3_keys,
-                        array_agg(
-                            json_build_object(
-                                'mem0_id', m.mem0_id,
-                                'mem0_infered_memory', m.mem0_infered_memory
-                            ) 
-                        ) filter (
-                            where m.mem0_infered_memory is not null
-                        ) as memories
-                    from
-                        interactions i
-                    left join memories m on
-                        m.raw_message_id = i.raw_message_id
-                    left join raw_messages rm on
-                        m.raw_message_id = rm.id
-                    left join media_files mf on
-                        rm.id = mf.raw_message_id
-                    where
-                        i.user_id = %s
-                    group by
-                        i.id,
-                        i.raw_message_id,
-                        i.user_message,
-                        i.bot_response,
-                        rm.body,
-                        rm.message_type,
-                        i.created_at
-                    order by
-                        i.id desc
-                    limit %s
+SELECT
+  i.id,
+  i.user_id,
+  i.raw_message_id,
+  i.user_message,
+  i.bot_response,
+  i.sources AS sources,
+  COALESCE(rm.body, 'NO_TEXT_ONLY_MEDIA') AS original_message_body,
+  rm.message_type,
+  media.media_file_s3_keys,
+  COALESCE(mem_created.memory_created, '[]'::json) AS memory_created
+FROM interactions i
+LEFT JOIN raw_messages rm
+  ON rm.id = i.raw_message_id
+
+-- Aggregate media keys for this raw_message once
+LEFT JOIN LATERAL (
+  SELECT array_agg(DISTINCT mf.s3_key)
+           FILTER (WHERE mf.s3_key IS NOT NULL) AS media_file_s3_keys
+  FROM message_media mm
+  JOIN media_files mf ON mf.id = mm.media_file_id
+  WHERE mm.raw_message_id = i.raw_message_id
+) media ON TRUE
+
+LEFT JOIN LATERAL (
+  SELECT json_agg(
+           json_build_object(
+             'id', m.id,
+             'mem0_id', m.mem0_id,
+             'mem0_infered_memory', m.mem0_infered_memory,
+             'created_at', m.created_at,
+             'updated_at', m.updated_at
+           )
+           ORDER BY m.created_at DESC
+         ) AS memory_created
+  FROM memories m
+  WHERE m.raw_message_id = i.raw_message_id
+) mem_created ON TRUE
+
+WHERE i.user_id = %s
+ORDER BY i.id DESC
+LIMIT %s;
+
                 """
                 values = (user_id, limit)
             else:
@@ -477,12 +498,14 @@ class DatabaseService:
             logger.error(f"Error in get_interactions_by_user_id: {e}")
             raise
 
-    def get_media_file_by_hash(self, user_id: int, file_hash: str) -> Optional[Dict[str, Any]]:
+    def get_media_file_by_hash(self, file_hash: str) -> Optional[MediaFile]:
         try:
-            select_sql = "SELECT * FROM media_files WHERE user_id = %s and file_hash = %s"
-            return self.db.select_one(select_sql, (user_id, file_hash,))
+            select_sql = "SELECT * FROM media_files WHERE file_hash = %s"
+            result = self.db.select_one(select_sql, (file_hash,))
+            return MediaFile(**dict(result)) if result else None
         except Exception as e:
             logger.error(f"Error in get_media_file_by_hash: {e}")
             raise
+    
 # Global database instance
 db_service = DatabaseService()
