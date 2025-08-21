@@ -27,7 +27,9 @@ def process_whatsapp_webhook(self, webhook_data: Dict[str, Any]) -> str:
             
             response = assistant_layer.process_whatsapp_message(webhook_data)
 
-            twilio_media_helper.send_message(webhook_data.get('From'), response)
+            print("\n\n: RESPONSE", response, "\n\n")
+
+            # twilio_media_helper.send_message(webhook_data.get('From'), response)
 
         except Exception as process_error:
             logger.error(f"Failed in assistant_layer.process_whatsapp_message: {str(process_error)}")

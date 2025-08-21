@@ -1,4 +1,29 @@
-# WhatsApp AI Memory Assistant
+# Whatsy! - WhatsAPP AI Memory Assistant made with Mem0
+
+
+## Installation and Setup
+
+1. Install Python dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+2. Set up your `.env` file with all the required configuration keys listed above
+
+3. Run database migrations:
+```bash
+# Execute the SQL files in migrations/ folder in order
+```
+
+4. Start the Celery worker (for asynchronous processing):
+```bash
+python scripts/start_worker.py
+```
+
+5. Run the main application:
+```bash
+uvicorn main:app --reload --port 8000
+```
 
 ## Required Configuration Keys and Instruments
 
@@ -98,29 +123,6 @@ The database schema includes tables for:
 
 For detailed schema definitions, see the migration files in the `migrations/` folder.
 
-## Installation and Setup
-
-1. Install Python dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-2. Set up your `.env` file with all the required configuration keys listed above
-
-3. Run database migrations:
-```bash
-# Execute the SQL files in migrations/ folder in order
-```
-
-4. Start the Celery worker (for asynchronous processing):
-```bash
-python scripts/start_worker.py
-```
-
-5. Run the main application:
-```bash
-uvicorn main:app --reload --port 8000
-```
 
 The application will start on `http://localhost:8000` and be ready to receive WhatsApp webhooks at `/webhook`.
 
