@@ -269,6 +269,7 @@ class MediaAnalytics(BaseModel):
     media_type_distribution: Dict[str, int]
     total_storage_mb: float
     total_media_files: int
+
 class InteractionAnalytics(BaseModel):
     total_interactions: int
     interactions_today: int

@@ -723,9 +723,7 @@ class DatabaseService:
             storage_sql = """
                 SELECT 
                     COUNT(*) as total_files,
-                    SUM(file_size) as total_bytes,
-                    COUNT(*) FILTER (WHERE is_duplicate = true) as duplicate_files,
-                    COUNT(*) FILTER (WHERE is_duplicate = false) as unique_files
+                    SUM(file_size) as total_bytes
                 FROM media_files
                 WHERE file_size IS NOT NULL
             """
