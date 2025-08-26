@@ -155,8 +155,6 @@ class DatabaseService:
             result = self.db.select_one(select_sql, (whatsapp_id,))
             
             if result:
-                logger.info(f"Found existing user with ID: {result['id']}")
-
                 return User(**dict(result))
             
             # User doesn't exist, create new one
@@ -783,6 +781,21 @@ class DatabaseService:
             }
         except Exception as e:
             logger.error(f"Error in _get_interaction_analytics: {e}")
+            raise
+
+    def get_media_files_by_mem0_id(self, mem0_id_list: List[str]) -> List[Dict[str, Any]]:
+        try:
+            select_sql = """
+                SELECT distinct mf.s3_url
+                FROM media_files mf
+                INNER JOIN message_media mm ON mf.id = mm.media_file_id
+                INNER JOIN memories m ON mm.raw_message_id = m.raw_message_id
+                WHERE m.mem0_id IN %s
+            """
+            result = self.db.select_many(select_sql, (tuple(mem0_id_list) + ("-1",),))
+            return result if result else []
+        except Exception as e:
+            logger.error(f"Error in get_media_files_by_mem0_id for mem0_id {mem0_id_list}: {e}")
             raise
     
 # Global database instance

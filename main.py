@@ -61,7 +61,7 @@ async def webhook(request: Request):
         form = await request.form()
         data = dict(form)
 
-        logger.info(f"Incoming WhatsApp webhook data: {data}")
+        # logger.info(f"Incoming WhatsApp webhook data: {data}")
 
         # Extract media information
         num_media = int(data.get("NumMedia", 0))
@@ -90,14 +90,12 @@ async def webhook(request: Request):
             print(twiml)
             return Response(content=str(twiml), media_type="application/xml")
 
-        logger.info(f"Processed WhatsApp data: {webhook_data.dict()}")
 
         # Try to enqueue the message for asynchronous processing
 
         if celery_service.is_redis_available():
             quick_twiml = MessagingResponse()
             task_id = celery_service.enqueue_webhook_message(data)
-            logger.info(f"Message enqueued with task ID: {task_id}")
             
             # Send acknowledgment response
             return Response(content=str(quick_twiml), media_type="application/xml")
@@ -148,8 +146,6 @@ async def create_memory(memory_request: CreateMemoryRequest):
     
         memory_id = assistant_layer.store_memory(user_id, memory_request.memory_text.strip(), memory_request.memory_type, memory_request.metadata)
 
-        logger.info(f"Created memory {memory_id} for user {user_id}")
-        
         return {
             "message": "Memory created successfully",
             "user_id": user_id,

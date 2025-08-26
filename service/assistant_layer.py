@@ -23,6 +23,7 @@ class AssistantLayer:
     
     def process_whatsapp_message(self, data: WhatsappWebhook) -> str:
         try:
+            # use SmsSid
             message_sid = data.get('MessageSid', '')
             
             # Extract user information from webhook data
@@ -104,9 +105,9 @@ class AssistantLayer:
                 conversation_history=past_interactions, attached_media_files=attached_media_files
             )
             chat_response = response_obj['response']
-            print(response_obj)
-            
-            # [{'results': [{'id': '8e5bf579-99f4-4331-a935-3874000a915f', 'event': 'UPDATE', 'memory': 'Shubham Singh is approximately 25 years old', 'previous_memory': 'Shubham Singh is about 25 years old'}, {'id': '5fdddae6-f30b-4734-8496-43f9cd7542db', 'event': 'ADD', 'memory': "User's product is a SAAS company for user behavior analytics", 'structured_attributes': {'day': 20, 'hour': 13, 'year': 2025, 'month': 8, 'minute': 9, 'quarter': 3, 'is_weekend': False, 'day_of_week': 'wednesday', 'day_of_year': 232, 'week_of_year': 34}}]}]
+
+            self.log_gemini_response(response_obj)
+
             # store the memory_content in the database
             for mem in response_obj['memories_stored']:
                 for mem0_id in mem['results']:
@@ -217,7 +218,7 @@ class AssistantLayer:
             
             signed_url = self.file_service.get_signed_url(s3_key)
 
-            description = self.gemini_service.analyze_media(signed_url, content_type)
+            description = self.gemini_service.analyze_media(signed_url, content_type, model="gemini-2.5-flash")
 
             # Store media file independently
             media_file = self.db.store_media_file(
@@ -348,3 +349,26 @@ class AssistantLayer:
             "memories": formatted_memories,
             "sourced_memories": sourced_memories
         }
+    
+    def log_gemini_response(self, response_obj):
+        if response_obj.get('memories_retrieved', []):
+            print("\n\n")
+            print("\033[92m" + "Memories retrieved:" + "\033[0m")
+            for mem in response_obj['memories_retrieved']:
+                print(f"\033[92m{mem['id']}. {mem['memory']}\033[0m")
+
+        # print all memories stored in the database in Blue color
+        if response_obj.get('memories_stored', []):
+            print("\n\n")
+            print("\033[94m" + "Memories stored:" + "\033[0m")
+
+            for mem in response_obj['memories_stored']:
+                for mem0_id in mem['results']:
+                    print(f"\033[94m{mem0_id['id']}. {mem0_id['memory']}\033[0m")
+
+        # in print all the media files in the database in pink color
+        if response_obj.get('media_files', []):
+            print("\n\n")
+            print("\033[95m" + "Media files:" + "\033[0m")
+            for media_file in response_obj['media_files']:
+                print(f"\033[95m{media_file}\033[0m")

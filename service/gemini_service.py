@@ -6,6 +6,16 @@ from typing import Optional, Dict, Any, List
 import logging
 from service.mem0_service import Mem0Service
 from datetime import datetime, timezone, timedelta
+from service.database import db_service
+import traceback
+from service.object_storage import ObjectStorageService
+
+# Suppress lower-severity gRPC logs
+os.environ["GRPC_VERBOSITY"] = "ERROR"
+
+# Suppress Google/Abseil log messages below ERROR
+# Levels: 0=INFO, 1=WARNING, 2=ERROR, 3=FATAL
+os.environ["GLOG_minloglevel"] = "2"
 
 get_memory_function = types.FunctionDeclaration(
     name="get_memory",
@@ -59,7 +69,7 @@ class GeminiService:
     def __init__(
         self,
         location: str = "global",
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-2.5-pro",
         memory_service: Optional[Mem0Service] = None
     ):
         """
@@ -74,6 +84,8 @@ class GeminiService:
         self.location = location
         self.model = model
         self.memory_service = memory_service
+        self.db = db_service
+        self.file_service = ObjectStorageService()
         
         # Initialize the client
         try:
@@ -88,7 +100,8 @@ class GeminiService:
         mime_type: str = "video/mp4",
         temperature: float = 0,
         max_output_tokens: int = 65535,
-        stream: bool = True
+        stream: bool = True,
+        model: str | None = None
     ) -> str:
         # Validate inputs
         if not url or not url.strip():
@@ -141,7 +154,7 @@ For the given video, transcribe the video/audio and transcribe to text in simple
             if stream:
                 result = ""
                 for chunk in self.client.models.generate_content_stream(
-                    model=self.model,
+                    model=model or self.model,
                     contents=contents,
                     config=config,
                 ):
@@ -160,6 +173,24 @@ For the given video, transcribe the video/audio and transcribe to text in simple
         except Exception as e:
             logging.error(f"Failed to generate content: {e}")
             raise
+
+    def _format_media_files_as_context(self, media_files: List[Dict[str, Any]]) -> str:
+
+        if not media_files:
+            return ""
+        
+        media = []
+
+        for i, media_file in enumerate(media_files, 1):
+            media_file_url = self.file_service.get_signed_url(media_file.get('s3_url', ''))
+            if media_file_url:
+                media.append(
+                    types.Part.from_uri(
+                        file_uri=media_file_url,
+                        mime_type='image/jpeg'
+                    )
+                )
+        return media        
 
     def _format_memories_as_context(self, memories: List[Dict[str, Any]]) -> str:
         if not memories:
@@ -195,7 +226,7 @@ For the given video, transcribe the video/audio and transcribe to text in simple
         conversation_history: str = "",
         temperature: float = 0,
         attached_media_files: List[str] = [],
-        max_output_tokens: int = 4096,
+        max_output_tokens: int = 8000,
         **kwargs
     ) -> Dict[str, Any]:
 
@@ -261,11 +292,11 @@ User : {query}
             "response": "",
             "function_calls": [],
             "memories_retrieved": [],
-            "memories_stored": []
+            "memories_stored": [],
+            "media_files": []
         }
 
         try:
-            # === Step 1: Get initial response (may contain function calls) ===
             response = self.client.models.generate_content(
                 model=self.model,
                 contents=contents,
@@ -283,10 +314,14 @@ User : {query}
                 # Add memory context if any were retrieved
                 if result["memories_retrieved"]:
                     memory_context = self._format_memories_as_context(result["memories_retrieved"])
+                    media_context = self._format_media_files_as_context(result["media_files"])
+
                     contents.append(
                         types.Content(
                             role="user",
-                            parts=[types.Part.from_text(
+                            parts=[
+                                *media_context,
+                                types.Part.from_text(
                                 text=f"""{memory_context}
 Please use these memories as context to answer the original query:
 {query}
@@ -312,6 +347,7 @@ Please use these memories as context to answer the original query:
                 result["response"] = response.text or ""
 
         except Exception as e:
+            traceback.print_exc()
             logging.error(f"Failed to process llm_conversation: {e}")
             result["response"] = f"⚠️ Error while processing your request: {str(e)}"
 
@@ -376,6 +412,10 @@ Please use these memories as context to answer the original query:
                 )
 
                 result["memories_retrieved"].extend(memories)
+
+                mem0_ids = [memory.get('id') for memory in memories]
+                media_files = self.db.get_media_files_by_mem0_id(mem0_ids)
+                result["media_files"] = media_files
 
                 function_responses.append(
                     types.Part.from_function_response(

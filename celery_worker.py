@@ -42,8 +42,6 @@ def main():
             '--without-heartbeat',  # Disable heartbeat if not needed
         ]
         
-        logger.info("Starting Celery worker with options:")
-        logger.info(f"  Options: {' '.join(worker_options[1:])}")
         
         # Start the worker
         celery_app.start(worker_options)

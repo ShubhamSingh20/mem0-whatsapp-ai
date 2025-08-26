@@ -95,7 +95,6 @@ class ObjectStorageService:
             
             # Generate public URL
             s3_url = f"{BUCKET_URL}/{s3_key}"
-            logger.info(f"Successfully uploaded {file_path} to {s3_url}")
             return s3_url
             
         except ClientError as e:

@@ -34,7 +34,6 @@ class CeleryService:
                 )
                 # Test the connection
                 self._redis_conn.ping()
-                logger.info(f"Connected to Redis at {self.redis_host}:{self.redis_port}/{self.redis_db}")
             except redis.ConnectionError as e:
                 logger.error(f"Failed to connect to Redis: {str(e)}")
                 raise
